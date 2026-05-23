@@ -1,0 +1,12 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "medallion-data-platform"
+resolve_s3 = true
+s3_prefix = "medallion-data-platform"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+image_repositories = []
+
+[default.global.parameters]
+region = "eu-central-1"
