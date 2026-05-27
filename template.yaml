@@ -59,8 +59,10 @@ Resources:
       MemorySize: 128
       Timeout: 120
       Policies:
-        - S3WritePolicy:
+        - S3CrudPolicy:
             BucketName: medallion-data-platform
+        - LambdaInvokePolicy:
+            FunctionName: hackernews-merger
       Events:
         SQSEvent:
           Type: SQS
@@ -83,11 +85,6 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: medallion-data-platform
-      Events:
-        ScheduleEvent:
-          Type: Schedule
-          Properties:
-            Schedule: "cron(15 0 * * ? *)"
 
   # Twitter Orchestrator - triggers every day at midnight
   TwitterOrchestrator:
