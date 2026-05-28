@@ -62,4 +62,20 @@ def lambda_handler(event, context):
             ContentType="application/json"
         )
 
+        # Check if this is the last chunk and trigger merger
+        prefix = f"bronze/hackernews/year={year}/month={month}/day={day}/"
+        response = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix=prefix)
+        chunk_keys = [
+            obj["Key"] for obj in response.get("Contents", [])
+            if "chunk_" in obj["Key"]
+        ]
+
+        if len(chunk_keys) >= total_chunks:
+            lambda_client = boto3.client("lambda")
+            lambda_client.invoke(
+                FunctionName="hackernews-merger",
+                InvocationType="Event"
+            )
+            print(f"Triggered hackernews-merger")
+
     return {"statusCode": 200}

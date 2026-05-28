@@ -10,6 +10,7 @@ BUCKET_NAME = "medallion-data-platform"
 SOURCE_KEY = "bronze/twitter/covid19_tweets.csv"
 CHUNK_SIZE = 1000
 
+
 def lambda_handler(event, context):
     yesterday_str = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     year, month, day = yesterday_str[:4], yesterday_str[5:7], yesterday_str[8:10]
@@ -66,6 +67,14 @@ def lambda_handler(event, context):
         Body=json.dumps(meta).encode("utf-8"),
         ContentType="application/json"
     )
+
+    # Trigger the merger lambda
+    lambda_client = boto3.client("lambda")
+    lambda_client.invoke(
+        FunctionName="twitter-merger",
+        InvocationType="Event"
+    )
+    print("Triggered twitter-merger")
 
     return {
         "statusCode": 200,
