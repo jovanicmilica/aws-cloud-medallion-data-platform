@@ -101,13 +101,15 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: medallion-data-platform
+        - LambdaInvokePolicy:
+            FunctionName: twitter-merger
       Events:
         ScheduleEvent:
           Type: Schedule
           Properties:
             Schedule: "cron(0 0 * * ? *)"
 
-  # Twitter Merger - triggers every day at 00:15 UTC
+  # Twitter Merger - event driven, triggered by orchestrator
   TwitterMerger:
     Type: AWS::Serverless::Function
     Properties:
@@ -122,8 +124,3 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: medallion-data-platform
-      Events:
-        ScheduleEvent:
-          Type: Schedule
-          Properties:
-            Schedule: "cron(15 0 * * ? *)"
