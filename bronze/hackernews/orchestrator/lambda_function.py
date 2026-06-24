@@ -1,6 +1,7 @@
 import json
 import boto3
 import urllib.request
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 import os
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ SQS_QUEUE_URL = os.environ["SQS_QUEUE_URL"]
 
 HN_MAX_URL = "https://hacker-news.firebaseio.com/v0/maxitem.json"
 HN_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{}.json"
+ALGOLIA_SEARCH_URL = "https://hn.algolia.com/api/v1/search_by_date"
 
 CHUNK_SIZE = 1000
 
@@ -34,9 +36,33 @@ def get_item_date(item_id):
     return datetime.fromtimestamp(item["time"], tz=timezone.utc).date()
 
 
-def find_start_id(max_id):
-    """Binary search to find the first item ID belonging to yesterday."""
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+def find_start_id_algolia(yesterday):
+    """
+    Query Algolia for the last item posted before yesterday midnight.
+    Returns its HN item ID, which sits just below yesterday's first item.
+    Single API call — O(1) vs O(log n) HN Firebase calls for binary search.
+    """
+    yesterday_start_ts = int(
+        datetime(yesterday.year, yesterday.month, yesterday.day, tzinfo=timezone.utc).timestamp()
+    )
+    params = urllib.parse.urlencode({
+        "numericFilters": f"created_at_i<{yesterday_start_ts}",
+        "hitsPerPage": 1,
+    })
+    url = f"{ALGOLIA_SEARCH_URL}?{params}"
+
+    with urllib.request.urlopen(url, timeout=10) as response:
+        data = json.loads(response.read())
+
+    hits = data.get("hits", [])
+    if not hits:
+        return None
+
+    return int(hits[0]["objectID"])
+
+
+def find_start_id_binary_search(max_id, yesterday):
+    """Binary search fallback to find the first item ID belonging to yesterday."""
     lo = max_id - 30000
     hi = max_id
 
@@ -53,8 +79,25 @@ def find_start_id(max_id):
         else:
             hi = mid
 
-    print(f"Start ID found: {lo} for date {yesterday}")
     return lo
+
+
+def find_start_id(max_id):
+    """Find the first item ID from yesterday, using Algolia with binary search fallback."""
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+
+    try:
+        start_id = find_start_id_algolia(yesterday)
+        if start_id is not None:
+            print(f"Start ID found via Algolia: {start_id} for date {yesterday}")
+            return start_id
+        print("Algolia returned no hits, falling back to binary search")
+    except Exception as e:
+        print(f"Algolia lookup failed ({e}), falling back to binary search")
+
+    start_id = find_start_id_binary_search(max_id, yesterday)
+    print(f"Start ID found via binary search: {start_id} for date {yesterday}")
+    return start_id
 
 
 def lambda_handler(event, context):
@@ -66,7 +109,7 @@ def lambda_handler(event, context):
     except Exception as e:
         return {"statusCode": 500, "body": f"Failed to fetch max ID: {e}"}
 
-    # 2. Binary search for the start of yesterday
+    # 2. Find the start ID for yesterday
     start_id = find_start_id(max_id)
 
     yesterday_str = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
