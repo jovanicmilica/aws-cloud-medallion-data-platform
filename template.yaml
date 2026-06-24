@@ -33,11 +33,6 @@ Resources:
             BucketName: medallion-data-platform
         - SQSSendMessagePolicy:
             QueueName: !GetAtt HackernewsWorkerQueue.QueueName
-      Events:
-        ScheduleEvent:
-          Type: Schedule
-          Properties:
-            Schedule: "cron(0 0 * * ? *)"
 
   # SQS Queue - queue between orchestrator and worker
   HackernewsWorkerQueue:
@@ -86,6 +81,24 @@ Resources:
         - S3CrudPolicy:
             BucketName: medallion-data-platform
 
+  # Hackernews Normalizer - event driven, triggered by merger
+  HackernewsNormalizer:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: hackernews-normalizer
+      Architectures:
+        - x86_64
+      CodeUri: ./silver/hackernews/normalizer/
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.12
+      MemorySize: 1024
+      Timeout: 300
+      Layers:
+        - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
+      Policies:
+          - S3CrudPolicy:
+              BucketName: medallion-data-platform
+
   # Twitter Orchestrator - triggers every day at midnight
   TwitterOrchestrator:
     Type: AWS::Serverless::Function
@@ -103,11 +116,6 @@ Resources:
             BucketName: medallion-data-platform
         - LambdaInvokePolicy:
             FunctionName: twitter-merger
-      Events:
-        ScheduleEvent:
-          Type: Schedule
-          Properties:
-            Schedule: "cron(0 0 * * ? *)"
 
   # Twitter Merger - event driven, triggered by orchestrator
   TwitterMerger:
@@ -124,3 +132,115 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: medallion-data-platform
+
+  # Twitter Normalizer - event driven, triggered by merger
+  TwitterNormalizer:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: twitter-normalizer
+      Architectures:
+        - x86_64
+      CodeUri: ./silver/twitter/normalizer/
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.12
+      MemorySize: 1024
+      Timeout: 300
+      Layers:
+        - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
+      Policies:
+        - S3CrudPolicy:
+            BucketName: medallion-data-platform
+
+  # Silver Posts Merger - triggered by state machine after both normalizers complete
+  SilverPostsMerger:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: silver-posts-merger
+      Architectures:
+        - x86_64
+      CodeUri: ./silver/merger/
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.12
+      MemorySize: 512
+      Timeout: 120
+      Layers:
+        - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
+      Policies:
+        - S3CrudPolicy:
+            BucketName: medallion-data-platform
+
+  # Daily Data Pipeline - orchestrates bronze ingestion, silver normalization and merging
+  DataPipelineStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: data-pipeline
+      Definition:
+        Comment: "Daily pipeline: ingest bronze, wait for HN workers, normalize silver, merge"
+        StartAt: IngestBronzeData
+        States:
+          IngestBronzeData:
+            Type: Parallel
+            Branches:
+              - StartAt: InvokeHNOrchestrator
+                States:
+                  InvokeHNOrchestrator:
+                    Type: Task
+                    Resource: arn:aws:states:::lambda:invoke
+                    Parameters:
+                      FunctionName: hackernews-orchestrator
+                    End: true
+              - StartAt: InvokeTwitterOrchestrator
+                States:
+                  InvokeTwitterOrchestrator:
+                    Type: Task
+                    Resource: arn:aws:states:::lambda:invoke
+                    Parameters:
+                      FunctionName: twitter-orchestrator
+                    End: true
+            Next: WaitForHNWorkers
+          WaitForHNWorkers:
+            Type: Wait
+            Seconds: 3600
+            Next: NormalizeSilverData
+          NormalizeSilverData:
+            Type: Parallel
+            Branches:
+              - StartAt: InvokeHNNormalizer
+                States:
+                  InvokeHNNormalizer:
+                    Type: Task
+                    Resource: arn:aws:states:::lambda:invoke
+                    Parameters:
+                      FunctionName: hackernews-normalizer
+                    End: true
+              - StartAt: InvokeTwitterNormalizer
+                States:
+                  InvokeTwitterNormalizer:
+                    Type: Task
+                    Resource: arn:aws:states:::lambda:invoke
+                    Parameters:
+                      FunctionName: twitter-normalizer
+                    End: true
+            Next: MergeSilverPosts
+          MergeSilverPosts:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: silver-posts-merger
+            End: true
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: hackernews-orchestrator
+        - LambdaInvokePolicy:
+            FunctionName: twitter-orchestrator
+        - LambdaInvokePolicy:
+            FunctionName: hackernews-normalizer
+        - LambdaInvokePolicy:
+            FunctionName: twitter-normalizer
+        - LambdaInvokePolicy:
+            FunctionName: silver-posts-merger
+      Events:
+        DailySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: "cron(0 0 * * ? *)"
