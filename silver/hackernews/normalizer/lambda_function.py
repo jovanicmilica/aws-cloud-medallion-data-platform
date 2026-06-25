@@ -26,6 +26,7 @@ class Post:
     content_text: Optional[str]
     created_at: str
     post_type: str
+    score: Optional[int]
     year: str
     month: str
     day: str
@@ -71,6 +72,7 @@ def item_to_post(item: dict, year: str, month: str, day: str) -> Optional[Post]:
         content_text=content_text,
         created_at=epoch_to_iso(item["time"]),
         post_type=item.get("type", "unknown"),
+        score=item.get("score"),
         year=year,
         month=month,
         day=day,
