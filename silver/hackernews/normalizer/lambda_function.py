@@ -16,7 +16,7 @@ s3 = boto3.client("s3")
 BUCKET_NAME = "medallion-data-platform"
 HN_USER_URL = "https://hacker-news.firebaseio.com/v0/user/{}.json"
 MAX_WORKERS = 50
-USERS_COLUMNS = ["user_id", "username", "platform", "karma_score", "is_verified", "created_at"]
+USERS_COLUMNS = ["user_id", "username", "platform", "karma_score", "is_verified", "created_at", "followers_count"]
 
 
 @dataclass
@@ -40,6 +40,7 @@ class User:
     karma_score: Optional[int]
     is_verified: Optional[bool]
     created_at: Optional[str]
+    followers_count: Optional[int]
 
 
 def strip_html(text: str) -> Optional[str]:
@@ -94,6 +95,7 @@ def fetch_hn_user(username: str) -> Optional[User]:
             karma_score=data.get("karma"),
             is_verified=None,
             created_at=created_at,
+            followers_count=None,
         )
     except Exception:
         return None

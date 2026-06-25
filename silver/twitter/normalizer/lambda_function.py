@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 s3 = boto3.client("s3")
 
 BUCKET_NAME = "medallion-data-platform"
-USERS_COLUMNS = ["user_id", "username", "platform", "karma_score", "is_verified", "created_at"]
+USERS_COLUMNS = ["user_id", "username", "platform", "karma_score", "is_verified", "created_at", "followers_count"]
 
 
 @dataclass
@@ -21,6 +21,7 @@ class Post:
     content_text: Optional[str]
     created_at: str
     post_type: str
+    score: Optional[int]
     year: str
     month: str
     day: str
@@ -34,6 +35,7 @@ class User:
     karma_score: Optional[int]
     is_verified: Optional[bool]
     created_at: Optional[str]
+    followers_count: Optional[int]
 
 
 def parse_twitter_date(date_str: str) -> Optional[str]:
@@ -70,6 +72,7 @@ def item_to_post(item: dict, year: str, month: str, day: str) -> Optional[Post]:
         content_text=item.get("text") or None,
         created_at=created_at,
         post_type=post_type,
+        score=None,
         year=year,
         month=month,
         day=day,
@@ -89,6 +92,12 @@ def extract_twitter_user(tweet: dict) -> Optional[User]:
     else:
         is_verified = None
 
+    followers_raw = tweet.get("user_followers")
+    try:
+        followers_count = int(followers_raw) if followers_raw not in (None, "") else None
+    except (ValueError, TypeError):
+        followers_count = None
+
     return User(
         user_id=str(uuid.uuid4()),
         username=username,
@@ -96,6 +105,7 @@ def extract_twitter_user(tweet: dict) -> Optional[User]:
         karma_score=None,
         is_verified=is_verified,
         created_at=parse_twitter_date(tweet.get("user_created", "")),
+        followers_count=followers_count,
     )
 
 
