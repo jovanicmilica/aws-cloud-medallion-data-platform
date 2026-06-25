@@ -169,6 +169,24 @@ Resources:
         - S3CrudPolicy:
             BucketName: medallion-data-platform
 
+  # Gold Counts - computes daily_content_counts and daily_users_metric, triggered after silver merge
+  GoldCounts:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: gold-counts
+      Architectures:
+        - x86_64
+      CodeUri: ./gold/counts/
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.12
+      MemorySize: 512
+      Timeout: 120
+      Layers:
+        - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
+      Policies:
+        - S3CrudPolicy:
+            BucketName: medallion-data-platform
+
   # Daily Data Pipeline - orchestrates bronze ingestion, silver normalization and merging
   DataPipelineStateMachine:
     Type: AWS::Serverless::StateMachine
@@ -227,6 +245,12 @@ Resources:
             Resource: arn:aws:states:::lambda:invoke
             Parameters:
               FunctionName: silver-posts-merger
+            Next: RunGoldCounts
+          RunGoldCounts:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: gold-counts
             End: true
       Policies:
         - LambdaInvokePolicy:
@@ -239,6 +263,8 @@ Resources:
             FunctionName: twitter-normalizer
         - LambdaInvokePolicy:
             FunctionName: silver-posts-merger
+        - LambdaInvokePolicy:
+            FunctionName: gold-counts
       Events:
         DailySchedule:
           Type: Schedule
