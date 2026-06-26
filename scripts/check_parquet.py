@@ -1,9 +1,18 @@
 import pandas as pd
 
-print("DAILY CONTENT COUNTS")
-daily_content_counts = pd.read_parquet("C:/Users/Korisnik/Downloads/data.parquet")
-print(daily_content_counts)
+print("TOP X USERS BY FOLLOWERS")
+df = pd.read_parquet("C:/Users/Korisnik/Downloads/top_x_users.parquet")
+print(df)
 
-print("\nDAILY USERS METRIC")
-daily_users_metric = pd.read_parquet("C:/Users/Korisnik/Downloads/data (1).parquet")
-print(daily_users_metric)
+print("\nTOP HN USERS BY KARMA")
+df = pd.read_parquet("C:/Users/Korisnik/Downloads/top_hn_users_karma.parquet")
+print(df)
+
+print("\nTOP HN POSTS BY SCORE")
+df = pd.read_parquet("C:/Users/Korisnik/Downloads/top_hn_posts.parquet")
+print(df)
+
+print("\nTOP HN JOBS BY SCORE")
+df = pd.read_parquet("C:/Users/Korisnik/Downloads/top_hn_jobs.parquet")
+print(df)
+

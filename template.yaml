@@ -187,6 +187,24 @@ Resources:
         - S3CrudPolicy:
             BucketName: medallion-data-platform
 
+  # Gold Rankings - computes top-N ranking tables, triggered after gold-counts
+  GoldRankings:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: gold-rankings
+      Architectures:
+        - x86_64
+      CodeUri: ./gold/rankings/
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.12
+      MemorySize: 1024
+      Timeout: 120
+      Layers:
+        - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
+      Policies:
+        - S3CrudPolicy:
+            BucketName: medallion-data-platform
+
   # Daily Data Pipeline - orchestrates bronze ingestion, silver normalization and merging
   DataPipelineStateMachine:
     Type: AWS::Serverless::StateMachine
@@ -251,6 +269,12 @@ Resources:
             Resource: arn:aws:states:::lambda:invoke
             Parameters:
               FunctionName: gold-counts
+            Next: RunGoldRankings
+          RunGoldRankings:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: gold-rankings
             End: true
       Policies:
         - LambdaInvokePolicy:
@@ -265,6 +289,8 @@ Resources:
             FunctionName: silver-posts-merger
         - LambdaInvokePolicy:
             FunctionName: gold-counts
+        - LambdaInvokePolicy:
+            FunctionName: gold-rankings
       Events:
         DailySchedule:
           Type: Schedule
