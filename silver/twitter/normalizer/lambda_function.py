@@ -94,7 +94,12 @@ def extract_twitter_user(tweet: dict) -> Optional[User]:
 
     followers_raw = tweet.get("user_followers")
     try:
-        followers_count = int(followers_raw) if followers_raw not in (None, "") else None
+        if isinstance(followers_raw, str):
+            followers_raw = followers_raw.strip()
+        if followers_raw not in (None, "", "null", "NaN", "nan"):
+            followers_count = int(float(followers_raw))
+        else:
+            followers_count = None
     except (ValueError, TypeError):
         followers_count = None
 
@@ -151,32 +156,31 @@ def lambda_handler(event, context):
     today_users: dict = {}
     for tweet in raw_items:
         username = tweet.get("user_name")
-        if username and username not in today_users:
+        if username:
             user = extract_twitter_user(tweet)
             if user:
-                today_users[username] = user
+                if username not in today_users:
+                    today_users[username] = user
+                else:
+                    old_fc = today_users[username].followers_count or -1
+                    new_fc = user.followers_count or -1
+                    if new_fc > old_fc:
+                        today_users[username] = user
+
+    if today_users:
+        today_users_df = pd.DataFrame([asdict(u) for u in today_users.values()])
+    else:
+        today_users_df = pd.DataFrame(columns=USERS_COLUMNS)
 
     existing_df = load_existing_users()
+
     if not existing_df.empty:
-        existing_usernames = set(existing_df["username"])
+        existing_df = existing_df[~existing_df["username"].isin(today_users_df["username"])]
+        all_users_df = pd.concat([existing_df, today_users_df], ignore_index=True)
     else:
-        existing_usernames = set()
+        all_users_df = today_users_df
 
-    new_users = []
-    for username, u in today_users.items():
-        if username not in existing_usernames:
-            new_users.append(u)
-
-    if new_users:
-        users_collection = []
-        for user in new_users:
-            users_collection.append(asdict(user))
-        new_users_df = pd.DataFrame(users_collection)
-    else:
-        new_users_df = pd.DataFrame(columns=USERS_COLUMNS)
-
-    all_users_df = pd.concat([existing_df, new_users_df], ignore_index=True)
-    all_users_df = all_users_df.drop_duplicates(subset=["username"])
+    all_users_df["followers_count"] = pd.to_numeric(all_users_df["followers_count"], errors='coerce').astype('Int64')
 
     try:
         wr.s3.to_parquet(
@@ -199,5 +203,5 @@ def lambda_handler(event, context):
 
     return {
         "statusCode": 200,
-        "body": f"Staged {len(unique_posts)} posts, {len(all_users_df)} total users ({len(new_users)} new)",
+        "body": f"Staged {len(unique_posts)} posts, {len(all_users_df)} total users in X.",
     }
