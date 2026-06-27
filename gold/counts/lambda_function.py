@@ -95,7 +95,7 @@ def lambda_handler(event, context):
             path=f"s3://{BUCKET_NAME}/gold/daily_content_counts/",
             dataset=True,
             partition_cols=["date"],
-            mode="append",
+            mode="overwrite_partitions",
         )
     except Exception as e:
         return {"statusCode": 500, "body": f"Failed to write daily_content_counts: {e}"}
@@ -108,12 +108,12 @@ def lambda_handler(event, context):
             path=f"s3://{BUCKET_NAME}/gold/daily_users_metric/",
             dataset=True,
             partition_cols=["platform", "date"],
-            mode="append",
+            mode="overwrite_partitions",
         )
     except Exception as e:
         return {"statusCode": 500, "body": f"Failed to write daily_users_metric: {e}"}
 
     return {
         "statusCode": 200,
-        "body": f"Wrote daily_content_counts ({len(content_counts_df)} rows) and daily_users_metric ({len(users_metric_df)} rows) for {yesterday_str} with complete metrics and strict layout formatting."
+        "body": f"Wrote daily_content_counts ({len(content_counts_df)} rows) and daily_users_metric ({len(users_metric_df)} rows) for {yesterday_str}"
     }

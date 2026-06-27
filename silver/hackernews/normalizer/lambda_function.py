@@ -56,6 +56,17 @@ def epoch_to_iso(ts: int) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def determine_post_type(item: dict) -> str:
+    """Detect Ask HN posts, since HN API never sends type='ask' directly"""
+    raw_type = item.get("type", "unknown")
+    title = item.get("title", "") or ""
+
+    if raw_type == "story" and title.strip().lower().startswith("ask hn:"):
+        return "ask"
+
+    return raw_type
+
+
 def item_to_post(item: dict, year: str, month: str, day: str) -> Optional[Post]:
     if "id" not in item or "time" not in item:
         return None
@@ -72,7 +83,7 @@ def item_to_post(item: dict, year: str, month: str, day: str) -> Optional[Post]:
         author_username=item.get("by"),
         content_text=content_text,
         created_at=epoch_to_iso(item["time"]),
-        post_type=item.get("type", "unknown"),
+        post_type=determine_post_type(item),
         score=item.get("score"),
         year=year,
         month=month,
