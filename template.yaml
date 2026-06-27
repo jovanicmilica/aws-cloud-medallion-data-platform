@@ -205,6 +205,43 @@ Resources:
         - S3CrudPolicy:
             BucketName: medallion-data-platform
 
+  # S3 To Postgres
+  S3ToPostgresLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: s3-to-postgres
+      Architectures:
+        - x86_64
+      CodeUri: ./export/s3_to_postgres/
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.12
+      MemorySize: 1024
+      Timeout: 300
+      Layers:
+        - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
+      VpcConfig:
+        SubnetIds:
+          - !Ref DataPlatformSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Environment:
+        Variables:
+          DB_HOST: !GetAtt DataPlatformEC2.PrivateIp
+          DB_NAME: medallion
+          DB_USER: medallion_user
+          DB_PASSWORD: MedallionPwd123!
+          S3_BUCKET: medallion-data-platform
+      Policies:
+        - S3ReadPolicy:
+            BucketName: medallion-data-platform
+        - Statement:
+          - Effect: Allow
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DeleteNetworkInterface
+            Resource: '*'
+
   # Daily Data Pipeline - orchestrates bronze ingestion, silver normalization and merging
   DataPipelineStateMachine:
     Type: AWS::Serverless::StateMachine
@@ -275,6 +312,12 @@ Resources:
             Resource: arn:aws:states:::lambda:invoke
             Parameters:
               FunctionName: gold-rankings
+            Next: RunS3ToPostgres
+          RunS3ToPostgres:
+            Type: Task
+            Resource: arn:aws:states:::lambda:invoke
+            Parameters:
+              FunctionName: s3-to-postgres
             End: true
       Policies:
         - LambdaInvokePolicy:
@@ -291,8 +334,262 @@ Resources:
             FunctionName: gold-counts
         - LambdaInvokePolicy:
             FunctionName: gold-rankings
+        - LambdaInvokePolicy:
+            FunctionName: s3-to-postgres
       Events:
         DailySchedule:
           Type: Schedule
           Properties:
             Schedule: "cron(0 0 * * ? *)"
+  
+  # VPC Networking
+  DataPlatformVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+  
+  DataPlatformSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DataPlatformVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+  
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref DataPlatformVPC
+      InternetGatewayId: !Ref InternetGateway
+  
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DataPlatformVPC
+    
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref DataPlatformSubnet
+
+  S3VPCEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref DataPlatformVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - !Ref PublicRouteTable
+      VpcEndpointType: Gateway
+
+  # Security Groups
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: PostgreSQL and Superset on EC2
+      VpcId: !Ref DataPlatformVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 8088
+          ToPort: 8088
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: S3-to-PostgreSQL Lambda
+      VpcId: !Ref DataPlatformVPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  DataPlatformInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  DataPlatformInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref DataPlatformInstanceRole
+
+  # EC2 Instance
+  DataPlatformEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small
+      ImageId: '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      SubnetId: !Ref DataPlatformSubnet
+      SecurityGroupIds:
+        - !Ref EC2SecurityGroup
+      IamInstanceProfile: !Ref DataPlatformInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          exec > /var/log/userdata.log 2>&1
+
+          # ── PostgreSQL 15 ──────────────────────────────────────────────
+          dnf install -y postgresql15-server postgresql15
+          postgresql-setup --initdb
+
+          # Allow password auth from all VPC addresses
+          sed -i "s|host    all             all             127.0.0.1/32            ident|host    all             all             10.0.0.0/8              md5|" /var/lib/pgsql/data/pg_hba.conf
+          echo "listen_addresses = '*'" >> /var/lib/pgsql/data/postgresql.conf
+
+          systemctl enable postgresql
+          systemctl start postgresql
+
+          # Create DB, user, and all 6 gold tables
+          sudo -u postgres psql <<'SQL'
+          CREATE USER medallion_user WITH PASSWORD 'MedallionPwd123!';
+          CREATE DATABASE medallion OWNER medallion_user;
+          GRANT ALL PRIVILEGES ON DATABASE medallion TO medallion_user;
+          SQL
+
+          sudo -u postgres psql -d medallion <<'SQL'
+          CREATE TABLE IF NOT EXISTS daily_content_counts (
+            date        TEXT    NOT NULL,
+            post_type   TEXT    NOT NULL,
+            count       INTEGER,
+            dq_score    FLOAT,
+            PRIMARY KEY (date, post_type)
+          );
+          CREATE TABLE IF NOT EXISTS daily_users_metric (
+            platform    TEXT    NOT NULL,
+            date        TEXT    NOT NULL,
+            total_users INTEGER,
+            new_users   INTEGER,
+            dq_score    FLOAT,
+            PRIMARY KEY (platform, date)
+          );
+          CREATE TABLE IF NOT EXISTS top_x_users_by_followers (
+            date            TEXT    NOT NULL,
+            username        TEXT,
+            followers_count INTEGER,
+            rank_position   INTEGER NOT NULL,
+            dq_score        FLOAT,
+            PRIMARY KEY (date, rank_position)
+          );
+          CREATE TABLE IF NOT EXISTS top_hn_users_by_karma (
+            date          TEXT    NOT NULL,
+            username      TEXT,
+            karma_score   INTEGER,
+            rank_type     TEXT    NOT NULL,
+            rank_position INTEGER NOT NULL,
+            dq_score      FLOAT,
+            PRIMARY KEY (date, rank_type, rank_position)
+          );
+          CREATE TABLE IF NOT EXISTS top_hn_posts_by_score (
+            date          TEXT    NOT NULL,
+            post_id       TEXT,
+            content_text  TEXT,
+            score         INTEGER,
+            rank_position INTEGER NOT NULL,
+            dq_score      FLOAT,
+            PRIMARY KEY (date, rank_position)
+          );
+          CREATE TABLE IF NOT EXISTS top_hn_jobs_by_score (
+            date          TEXT    NOT NULL,
+            post_id       TEXT,
+            content_text  TEXT,
+            score         INTEGER,
+            rank_position INTEGER NOT NULL,
+            dq_score      FLOAT,
+            PRIMARY KEY (date, rank_position)
+          );
+          GRANT ALL ON ALL TABLES IN SCHEMA public TO medallion_user;
+          SQL
+
+          # ── Apache Superset ────────────────────────────────────────────
+          dnf install -y python3.11 python3.11-pip python3.11-devel gcc libpq-devel openssl-devel
+
+          pip3.11 install --upgrade pip
+          pip3.11 install apache-superset psycopg2-binary
+          pip3.11 install rich cachetools
+
+          mkdir -p /etc/superset /var/lib/superset
+          cat > /etc/superset/superset_config.py <<'CONF'
+          SECRET_KEY = 'MedallionSupersetKey123!'
+          SQLALCHEMY_DATABASE_URI = 'sqlite:////var/lib/superset/superset.db'
+          WTF_CSRF_ENABLED = False
+          CONF
+
+          export SUPERSET_CONFIG_PATH=/etc/superset/superset_config.py
+          export FLASK_APP=superset
+
+          superset db upgrade
+          superset fab create-admin \
+            --username admin \
+            --firstname Admin \
+            --lastname User \
+            --email admin@example.com \
+            --password admin
+          superset init
+
+          # Register the PostgreSQL data source in Superset
+          python3.11 - <<'PYEOF'
+          import os
+          os.environ['SUPERSET_CONFIG_PATH'] = '/etc/superset/superset_config.py'
+          from superset.app import create_app
+          from superset import db
+          flask_app = create_app()
+          with flask_app.app_context():
+              from superset.models.core import Database
+              existing = db.session.query(Database).filter_by(database_name='Medallion Platform').first()
+              if not existing:
+                  source = Database(
+                      database_name='Medallion Platform',
+                      sqlalchemy_uri='postgresql+psycopg2://medallion_user:MedallionPwd123!@localhost:5432/medallion',
+                      expose_in_sqllab=True,
+                  )
+                  db.session.add(source)
+                  db.session.commit()
+          PYEOF
+
+          # Run Superset as a systemd service
+          cat > /etc/systemd/system/superset.service <<'SERVICE'
+          [Unit]
+          Description=Apache Superset
+          After=network.target
+
+          [Service]
+          Environment=SUPERSET_CONFIG_PATH=/etc/superset/superset_config.py
+          ExecStart=/usr/local/bin/superset run -p 8088 --host 0.0.0.0
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
+          systemctl daemon-reload
+          systemctl enable superset
+          systemctl start superset
