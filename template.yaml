@@ -179,8 +179,8 @@ Resources:
       CodeUri: ./gold/counts/
       Handler: lambda_function.lambda_handler
       Runtime: python3.12
-      MemorySize: 1024
-      Timeout: 120
+      MemorySize: 2048
+      Timeout: 300
       Layers:
         - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
       Policies:
@@ -197,8 +197,8 @@ Resources:
       CodeUri: ./gold/rankings/
       Handler: lambda_function.lambda_handler
       Runtime: python3.12
-      MemorySize: 1024
-      Timeout: 120
+      MemorySize: 2048
+      Timeout: 300
       Layers:
         - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
       Policies:
