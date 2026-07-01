@@ -145,6 +145,11 @@ Resources:
       Runtime: python3.12
       MemorySize: 1024
       Timeout: 300
+      VpcConfig:
+        SubnetIds:
+          - !Ref DataPlatformPrivateSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
       Layers:
         - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
       Policies:
@@ -163,6 +168,11 @@ Resources:
       Runtime: python3.12
       MemorySize: 512
       Timeout: 120
+      VpcConfig:
+        SubnetIds:
+          - !Ref DataPlatformPrivateSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
       Layers:
         - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
       Policies:
@@ -181,6 +191,11 @@ Resources:
       Runtime: python3.12
       MemorySize: 2048
       Timeout: 300
+      VpcConfig:
+        SubnetIds:
+          - !Ref DataPlatformPrivateSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
       Layers:
         - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
       Policies:
@@ -199,6 +214,11 @@ Resources:
       Runtime: python3.12
       MemorySize: 2048
       Timeout: 300
+      VpcConfig:
+        SubnetIds:
+          - !Ref DataPlatformPrivateSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
       Layers:
         - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
       Policies:
@@ -221,7 +241,7 @@ Resources:
         - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python312:13"
       VpcConfig:
         SubnetIds:
-          - !Ref DataPlatformSubnet
+          - !Ref DataPlatformPrivateSubnet
         SecurityGroupIds:
           - !Ref LambdaSecurityGroup
       Environment:
@@ -398,6 +418,26 @@ Resources:
       VpcId: !Ref DataPlatformVPC
       CidrBlock: 10.0.1.0/24
       MapPublicIpOnLaunch: true
+
+  DataPlatformPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DataPlatformVPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: false
+
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DataPlatformVPC
+
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref DataPlatformPrivateSubnet
   
   InternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -434,6 +474,7 @@ Resources:
       ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
       RouteTableIds:
         - !Ref PublicRouteTable
+        - !Ref PrivateRouteTable   
       VpcEndpointType: Gateway
 
   # Security Groups
@@ -446,7 +487,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: 5432
           ToPort: 5432
-          CidrIp: 10.0.0.0/16
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
         - IpProtocol: tcp
           FromPort: 8088
           ToPort: 8088
@@ -461,7 +502,13 @@ Resources:
       GroupDescription: S3-to-PostgreSQL Lambda
       VpcId: !Ref DataPlatformVPC
       SecurityGroupEgress:
-        - IpProtocol: -1
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
           CidrIp: 0.0.0.0/0
 
   DataPlatformInstanceRole:
